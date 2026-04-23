@@ -174,7 +174,8 @@
       <h1>🏰 Maze TD</h1>
       <p>Build towers to stop waves of enemies from reaching the goal.<br>
          Path-blocking is prevented automatically.<br><br>
-         <strong>Keys:</strong> <kbd>1–4</kbd> select tower · <kbd>Space</kbd> pause · <kbd>Enter</kbd> next wave · <kbd>M</kbd> mute</p>
+         <strong>Keys:</strong> <kbd>1–4</kbd> select tower · <kbd>Space</kbd> pause · <kbd>Enter</kbd> next wave · <kbd>M</kbd> mute<br>
+         <kbd>U</kbd> upgrade selected · <kbd>Del</kbd> sell selected · <kbd>Esc</kbd> deselect</p>
       <button id="startBtn" class="overlay-btn">▶ Play</button>
     </div>
   </div>
@@ -340,7 +341,7 @@
       dmg:      lvl => 8   + 2*(lvl-1),
       fireRate: lvl => 1.4 + 0.1*(lvl-1),
       bulletSpeed: 6.2, bulletColor:'#67e8f9',
-      slowPct: lvl => clamp(0.35 + 0.05*(lvl-1), 0, .75),
+      slowPct: lvl => Math.min(0.35 + 0.05*(lvl-1), 0.75),
       slowDur: lvl => 1.6 + 0.2*(lvl-1),
       color:'#67e8f9',
       desc:'Slows nearby enemies on hit.',
@@ -879,7 +880,8 @@
     if (gold<cost) { showToast('Not enough gold!','warn'); return; }
     t.lvl++; t.spent+=cost; gold-=cost;
     SOUNDS.upgrade();
-    spawnParticles(...Object.values(gridToCenterPx(t.c,t.r)), '#ffd166', 10, tile*0.1, 0.5);
+    const {x: upx, y: upy} = gridToCenterPx(t.c, t.r);
+    spawnParticles(upx, upy, '#ffd166', 10, tile*0.1, 0.5);
     showToast(`${TOWER_DEF[t.type].label} upgraded to Lv.${t.lvl}`, 'good');
     selectTower(selectedTower);
     updateHUD();
