@@ -71,6 +71,7 @@
     .wave-announce{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%) scale(.7);font-size:28px;font-weight:900;color:#fff;text-shadow:0 0 24px var(--accent),0 2px 8px rgba(0,0,0,.8);pointer-events:none;opacity:0;z-index:30;transition:opacity .25s ease,transform .25s ease;}
     .wave-announce.show{opacity:1;transform:translate(-50%,-50%) scale(1);}
     .mode-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700;background:var(--surface);border:1px solid #2a3346;color:var(--muted);}
+    .best-label{color:var(--muted);font-size:10px;}
     @media(max-width:520px){header{gap:4px;padding:5px 8px;}.palette{grid-template-columns:repeat(3,1fr);gap:4px;padding:6px 8px;}.inspector{min-width:96vw;}.overlay-box{padding:18px 16px;}.selector-cards{grid-template-columns:repeat(3,1fr);gap:5px;}}
   </style>
 </head>
@@ -113,7 +114,7 @@
     <div class="stats">
       <div class="stat-chip">&#128176; <span class="val" id="gold">500</span></div>
       <div class="stat-chip">&#10084;&#65039; <span class="val" id="lives">20</span></div>
-      <div class="stat-chip">&#127754; <span class="val" id="wave">0</span><span style="color:var(--muted);font-size:10px" id="bestLabel"></span></div>
+      <div class="stat-chip">&#127754; <span class="val" id="wave">0</span><span class="best-label" id="bestLabel"></span></div>
       <div class="stat-chip">&#9876; <span class="val" id="kills">0</span></div>
       <div class="stat-chip">&#127942; <span class="val" id="score">0</span></div>
       <span class="mode-badge" id="modeBadge"></span>
@@ -282,6 +283,24 @@ const COLS=14,ROWS=20,SPAWN_GAP=0.45;
 let START={c:0,r:10},GOAL={c:13,r:10};
 let currentMap="open",currentMode="classic";
 
+// ===== Balance constants =====
+const POWERUP_DROP_CHANCE    = 0.08;  // 8% chance per non-minion kill
+const SCORE_PER_HP_DIVISOR   = 8;    // score earned = ceil(enemy.maxHp / SCORE_PER_HP_DIVISOR)
+const COMBO_GOLD_MULTIPLIER  = 0.5;  // combo bonus gold = floor(comboCount * COMBO_GOLD_MULTIPLIER)
+const COMBO_THRESHOLD        = 5;    // kills in window needed to trigger combo bonus
+const LIVES_WARN_THRESHOLD   = 8;    // lives <= this → yellow chip
+const LIVES_CRIT_THRESHOLD   = 3;    // lives <= this → red chip
+const BASE_ENEMY_COUNT       = 10;   // enemies on wave 1
+const ENEMY_COUNT_SCALE      = 1.15; // multiplicative per-wave growth
+const MIN_ENEMY_COUNT        = 8;
+const MAX_ENEMY_COUNT        = 60;
+const WAVE_GOLD_BASE         = 25;   // gold bonus on wave clear = WAVE_GOLD_BASE + WAVE_GOLD_SCALE * wave
+const WAVE_GOLD_SCALE        = 8;
+const WAVE_SCORE_MULTIPLIER  = 50;   // score per wave cleared = wave * WAVE_SCORE_MULTIPLIER
+// Enemy spawn probability bands (cumulative thresholds)
+const SPAWN_PROB = { fast:0.12, tank:0.25, regen:0.37, shield:0.47, splitter:0.55 };
+// (remaining probability goes to 'normal')
+
 // ===== Towers =====
 const TOWER_DEF={
   basic:{key:"basic",nameKey:"towerBasic",descKey:"descBasic",icon:"🟦",shortKey:"1",
@@ -424,7 +443,7 @@ function updateHUD(){
   goldEl.textContent=Math.floor(gold);livesEl.textContent=lives;
   waveEl.textContent=wave;killsEl.textContent=kills;scoreEl.textContent=score;
   const bestSpan=document.getElementById("best");if(bestSpan)bestSpan.textContent=best;
-  livesEl.className="val"+(lives<=3?" bad":lives<=8?" warn":"");
+  livesEl.className="val"+(lives<=LIVES_CRIT_THRESHOLD?" bad":lives<=LIVES_WARN_THRESHOLD?" warn":"");
 }
 function updateLegend(){
   legendEl.innerHTML="<div>"+t("legendLine1")+"</div><div>"+t("legendLine2")+"</div><div><kbd>"+t("legendLine3")+"</kbd></div>";
@@ -474,7 +493,7 @@ function drawLightningArcs(){
 const PU_TYPES=["gold","life","freeze","nuke"];
 const PU_EMOJIS={gold:"💰",life:"❤️",freeze:"❄️",nuke:"💥"};
 function maybeDropPowerup(e){
-  if(e.kind==="minion")return;if(Math.random()>0.08)return;
+  if(e.kind==="minion")return;if(Math.random()>POWERUP_DROP_CHANCE)return;
   const type=PU_TYPES[Math.floor(Math.random()*PU_TYPES.length)];
   powerups.push({x:e.x,y:e.y,type,life:9.0,bobT:Math.random()*Math.PI*2});
 }
@@ -579,11 +598,14 @@ function generateWavePlan(w){
     plan.push("boss");
     for(let i=0;i<6;i++)plan.push("normal");
   } else {
-    const count=Math.floor(clamp(10*Math.pow(1.15,w-1),8,60));
+    const count=Math.floor(clamp(BASE_ENEMY_COUNT*Math.pow(ENEMY_COUNT_SCALE,w-1),MIN_ENEMY_COUNT,MAX_ENEMY_COUNT));
     for(let i=0;i<count;i++){
       const r=Math.random();let tp="normal";
-      if(r<0.12)tp="fast";else if(r<0.25)tp="tank";else if(r<0.37)tp="regen";
-      else if(r<0.47)tp="shield";else if(r<0.55)tp="splitter";
+      if(r<SPAWN_PROB.fast)tp="fast";
+      else if(r<SPAWN_PROB.tank)tp="tank";
+      else if(r<SPAWN_PROB.regen)tp="regen";
+      else if(r<SPAWN_PROB.shield)tp="shield";
+      else if(r<SPAWN_PROB.splitter)tp="splitter";
       plan.push(tp);
     }
   }
@@ -621,11 +643,11 @@ function killEnemy(e){
   e.alive=false;
   const isBoss=e.kind==="boss";
   gold+=isBoss?30:goldPerKill();
-  kills++;score+=Math.ceil(e.maxHp/8);
+  kills++;score+=Math.ceil(e.maxHp/SCORE_PER_HP_DIVISOR);
   comboCount++;comboTimer=COMBO_WINDOW;
-  if(comboCount>=5){
-    const bonus=Math.floor(comboCount*.5);gold+=bonus;SFX.combo();
-    if(comboCount%5===0)showToast(t("comboBonusMsg",comboCount,bonus),"warn",1000);
+  if(comboCount>=COMBO_THRESHOLD){
+    const bonus=Math.floor(comboCount*COMBO_GOLD_MULTIPLIER);gold+=bonus;SFX.combo();
+    if(comboCount%COMBO_THRESHOLD===0)showToast(t("comboBonusMsg",comboCount,bonus),"warn",1000);
   }
   const col=ENEMY_DEF[e.kind].color;
   spawnParticles(e.x,e.y,col,isBoss?24:10,tile*(isBoss?.18:.10),isBoss?.8:.4);
@@ -780,7 +802,7 @@ function updateSpawning(dt){
   }
   if(spawnQ.length===0&&enemies.length===0){
     spawning=false;
-    const bonus=25+8*wave;gold+=bonus;score+=wave*50;
+    const bonus=WAVE_GOLD_BASE+WAVE_GOLD_SCALE*wave;gold+=bonus;score+=wave*WAVE_SCORE_MULTIPLIER;
     best=Math.max(best,wave);localStorage.setItem("mazetd_best",String(best));
     showToast(t("waveClearedMsg",wave,bonus),"good",1800);SFX.wave_clear();
     if(MODE_DEFS[currentMode].autoWave){autoWaveTimer=MODE_DEFS[currentMode].autoWaveDelay;}
